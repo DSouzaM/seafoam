@@ -99,7 +99,7 @@ module Seafoam
         # Basic attributes for a node.
         attrs[:shape] = "rectangle"
         attrs[:fontname] = "Arial"
-        attrs[:style] = "filled"
+        attrs[:style] = node.props[:style] || "filled"
         attrs[:color] = "black"
 
         # Color depends on the kind of node.
