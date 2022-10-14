@@ -4,7 +4,7 @@ require "tsort"
 
 module Seafoam
   module Passes
-    # The Truffle pass applies if it looks like it was compiled by Truffle.
+    # The Tasty pass applies if the graph contains tastytruffle nodes.
     class TastyPass < Pass
       class << self
         def applies?(graph)
@@ -20,6 +20,8 @@ module Seafoam
       def apply(graph)
         hide_nodes(graph)
         simplify_labels(graph)
+        simplify_blocks(graph)
+        simplify_whiles(graph)
         simplify_applies(graph)
         simplify_literals(graph)
         simplify_ops(graph)
@@ -33,6 +35,13 @@ module Seafoam
         node.outputs.each do |edge|
           hide_tree(edge.to)
         end
+      end
+
+      def find_child_edge(node, name)
+        node.outputs.find { |e| e.props[:name] == name }
+      end
+      def find_child(node, name)
+        find_child_edge(node, name).to
       end
 
       def hide_nodes(graph)
@@ -60,11 +69,49 @@ module Seafoam
         end
       end
 
+      def simplify_blocks(graph)
+        graph.nodes.each_value do |node|
+          next unless node.node_class.include?("OptimizedBlock")
+          # Blocks point to OptimizedBlocks which contain a sequence of subtrees. We can elide the OptimizedBlocks.
+          raise "Unexpected edges to OptimizedBlock" unless node.inputs.length == 1
+
+          block = node.inputs[0].from
+
+          node.outputs.each do |edge|
+            graph.create_edge(block, edge.to, edge.props.merge({ synthetic: true }))
+            edge.props[:hidden] = true
+          end
+
+          node.props[:hidden] = true
+
+          # We also want to ensure the children of a block are ordered sequentially in the output.
+          graph.add_rank(node.outputs.map(&:to))
+        end
+      end
+
+      def simplify_whiles(graph)
+        graph.nodes.each_value do |node|
+          next unless node.node_class.include?("While") && !node.node_class.include?("Repeating")
+          # Whiles point to OptimizedOSRLoopNodes, which point to WhileRepeatings which have a condition and body subtree.
+          # We can elide the loop and repeating nodes.
+          loop_node = find_child(node, "loopNode")
+          repeating_node = find_child(loop_node, "repeatingNode")
+          condition_node = find_child(repeating_node, "condition")
+          body_node = find_child(repeating_node, "body")
+
+          graph.create_edge(node, condition_node, { label: "cond", synthetic: true })
+          graph.create_edge(node, body_node, { label: "body", synthetic: true })
+          graph.add_rank([condition_node, body_node])
+          loop_node.props[:hidden] = true
+          repeating_node.props[:hidden] = true
+        end
+      end
+
       def simplify_applies(graph)
         argument_pattern = /arguments\[(\d+)\]/
         graph.nodes.each_value do |node|
           node_class = node.node_class
-          next unless node_class.include?("Apply") && !node.props[:hidden]
+          next unless node_class.include?("Apply") && !node_class.include?("ArrayApply") && !node.props[:hidden]
 
           method = if node.props.key?("selector")
                      node.props["selector"].split(".")[-1]
@@ -107,21 +154,26 @@ module Seafoam
         end
       end
 
-      def convert_arithmetic_op(op)
+      def convert_op(op)
         op[0] + op[1..].downcase
       end
 
       def simplify_ops(graph)
         graph.nodes.each_value do |node|
-          if node.node_class.include?("IntArithmetic")
-            node.props["label"] = "Int#{convert_arithmetic_op(node.props["op"])}"
+          if node.node_class.include?("IntArithmetic") || node.node_class.include?("IntComparison")
+            node.props["label"] = "Int#{convert_op(node.props["op"])}"
+            lhs = find_child(node, "lhs_")
+            rhs = find_child(node, "rhs_")
+            graph.add_rank([lhs, rhs])
+            # lhs_edge.props[:label] = "lhs"
+            # rhs_edge.props[:label] = "rhs"
           end
         end
       end
 
       def simplify_locals(graph)
         locals = {}
-        local_pattern = /Local\((\w+), \w+\)/
+        local_pattern = /Local\((\w+), \w+(?:\[\])*\)/
 
         graph.nodes.dup.each_value do |node|
           next unless node.node_class.include?("Local")
@@ -134,7 +186,8 @@ module Seafoam
             locals[local] = local_node
           end
 
-          graph.create_edge(node, local_node, { kind: "info" })
+          # This links a local access to a local. Creates a lot of visual noise, so I'll leave it commented out.
+          # graph.create_edge(node, local_node, { kind: "info" })
 
           match = local_pattern.match(local)
           local_name = match.captures[0]

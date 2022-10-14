@@ -4,13 +4,14 @@ module Seafoam
   # A graph, with properties, nodes, and edges. We don't encapsulate the graph
   # too much - be careful.
   class Graph
-    attr_reader :props, :nodes, :edges, :blocks, :new_id
+    attr_reader :props, :nodes, :edges, :blocks, :ranks, :new_id
 
     def initialize(props = nil)
       @props = props || {}
       @nodes = {}
       @edges = []
       @blocks = []
+      @ranks = []
       @new_id = 0
     end
 
@@ -45,6 +46,10 @@ module Seafoam
       edge.from.outputs.delete(edge)
       edge.to.inputs.delete(edge)
       edges.delete(edge)
+    end
+
+    def add_rank(nodes)
+      ranks.append(nodes)
     end
   end
 

@@ -17,6 +17,7 @@ module Seafoam
       start_graph(attrs)
       write_nodes(inline_attrs, graph, draw_blocks)
       write_edges(inline_attrs, graph)
+      write_ranks(graph)
       end_graph
     end
 
@@ -231,6 +232,19 @@ module Seafoam
       attrs[:fontcolor] = ICE_STONE
       attrs[:fillcolor] = DUST
       attrs
+    end
+
+    # Create a new subgraph with invisible edges to indicate rank. (https://stackoverflow.com/a/64007295)
+    def write_ranks(graph)
+      graph.ranks.each do |rank|
+        edges = rank.map{|node| "node#{node.id}"}.join(" -> ")
+        @stream.puts("  {")
+        @stream.puts("    rank=same;")
+        @stream.puts("    edge[style=invis];")
+        @stream.puts("    #{edges};")
+        @stream.puts("    rankdir=LR;")
+        @stream.puts("  }")
+      end
     end
 
     # Write a hash of key-value attributes into the DOT format.
