@@ -116,7 +116,7 @@ module Seafoam
           # If the node is to be inlined then draw it smaller and a different
           # shape.
           attrs[:shape] = "oval"
-          attrs[:fontsize] = "8"
+          # attrs[:fontsize] = "8"
 
           # Just record these attributes for where it's used by other nodes
           # so it can be drawn above them - don't actually declare a node.
@@ -206,7 +206,7 @@ module Seafoam
 
           # Inlined nodes skip the arrow for simplicity.
           attrs[:arrowhead] = "none"
-          attrs[:fontsize] = "8"
+          # attrs[:fontsize] = "8"
 
           # Declare a new node just for this user.
           output_node("  ", "inline#{edge.from.id}x#{edge.to.id}", node_attrs)

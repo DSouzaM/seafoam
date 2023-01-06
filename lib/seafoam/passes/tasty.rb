@@ -35,6 +35,8 @@ module Seafoam
         simplify_literals(graph)
         simplify_ops(graph)
         simplify_blocks(graph)
+        simplify_types(graph)
+        simplify_templates(graph)
         generate_ranks(graph)
       end
 
@@ -136,6 +138,56 @@ module Seafoam
         end
       end
 
+      def simplify_types(graph)
+        graph.nodes.each_value do |node|
+          types = ["MethodTypeParameterNode", "ConstTypeNode"]
+
+          next unless types.any? { |clazz| node.node_class&.include?(clazz) }
+
+          if node.node_class.include?("MethodTypeParameterNode")
+            read_local = find_child(node, "localReadNode")
+            tp = extract_local_name(read_local.props["local"])
+            node.props["label"] = "#{node.props["label"]}(#{tp})"
+            read_local.props[:hidden] = true
+          elsif node.node_class.include?("ConstType")
+            type = extract_const_type(node.props["type"])
+            node.props["label"] = if ['Int','Double'].include?(type)
+              "#{type}Type"
+            else
+              "NamedType(#{type})"
+            end
+          end
+
+        end
+      end
+
+      def simplify_templates(graph)
+        graph.nodes.dup.each_value do |node|
+          next unless node.node_class&.end_with?("DefDefTemplate")
+          generic_method_name = node.props["symbol"]
+
+          node.props["label"] = "GenericMethod(#{generic_method_name})"
+          switch = find_child(node, "dispatch")
+          switch.props["label"] = "TypeSwitch"
+
+
+          cache_pattern = /Cache\((.+)\)/
+          match = cache_pattern.match(switch.props["cache"])
+          specs = match.captures[0]
+          spec_pattern = /\[([\w,]+)\]/
+          spec_strings = specs.scan(spec_pattern).map { |x| x[0] }
+
+          spec_strings.each do |spec_string|
+            specialization = graph.create_node(graph.new_id, { synthetic: true, label: "Call(#{generic_method_name}$#{spec_string})"})
+            graph.create_edge(switch, specialization, { label: spec_string, synthetic: true })
+          end
+
+          register_rank(switch, rank_by_output_order)
+
+
+        end
+      end
+
       def simplify_ifs(graph)
         graph.nodes.each_value do |node|
           next unless node.node_class&.include?("If")
@@ -184,6 +236,7 @@ module Seafoam
                    else
                      node.props["signature"].split("(")[0]
                    end
+          method = method.split("{")[0]  # strip generic arguments from name
           node.props["label"] = "Call(#{method})"
 
           outputs = node.outputs.dup
@@ -230,9 +283,19 @@ module Seafoam
         end
       end
 
+      def extract_local_name(local)
+        local_pattern = /Local\(([\w$]+), \w+(?:\[\])*\)/
+        local_pattern.match(local).captures[0]
+      end
+
+      def extract_const_type(type)
+        type_pattern = /Type\((.+)\)/
+        type_pattern.match(type).captures[0]
+      end
+
       def simplify_locals(graph)
         locals = {}
-        local_pattern = /Local\((\w+), \w+(?:\[\])*\)/
+        local_template_pattern = /LocalTemplate\(([\w$]+), \w+\((\w+)\)\)/
 
         graph.nodes.dup.each_value do |node|
           next unless node.node_class&.include?("Local")
@@ -251,9 +314,17 @@ module Seafoam
           # This links a local access to a local. Creates a lot of visual noise, so I'll leave it commented out.
           # graph.create_edge(node, local_node, { kind: "info" })
 
-          match = local_pattern.match(local)
-          local_name = match.captures[0]
-          node.props["label"] = "#{node.props["label"]}(#{local_name})"
+          if local.include?("Template")
+            is_write = find_child_edge(node, "body") != nil
+            node_label = is_write ? "WriteLocal" : "ReadLocal"
+            match = local_template_pattern.match(local)
+            local_name = match.captures[0]
+            tp = match.captures[1]
+            node.props["label"] = "#{node_label}(#{local_name}: #{tp})"
+          else
+            local_name = extract_local_name(local)
+            node.props["label"] = "#{node.props["label"]}(#{local_name})"
+          end
         end
       end
 
